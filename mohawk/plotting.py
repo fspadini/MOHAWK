@@ -112,6 +112,151 @@ def plot_connectivity_matrix(
     return fig
 
 
+def _scalp_field(P, center, elec_pos, values, sigma=0.25):
+    """Interpolate electrode ``values`` onto surface points ``P`` (RBF on sphere)."""
+    dirs = elec_pos - center
+    dirs = dirs / (np.linalg.norm(dirs, axis=1, keepdims=True) + 1e-12)
+    Pd = P - center
+    Pn = Pd / (np.linalg.norm(Pd, axis=-1, keepdims=True) + 1e-12)
+    field = np.zeros(P.shape[:-1])
+    wsum = np.zeros(P.shape[:-1])
+    for k in range(len(elec_pos)):
+        cosang = np.tensordot(Pn, dirs[k], axes=([-1], [0]))
+        w = np.exp(-(1 - cosang) / sigma)
+        field += w * values[k]
+        wsum += w
+    return field / (wsum + 1e-12)
+
+
+def _arc3d(p0, p1, center, height, up_bias=1.8, n=32):
+    """3D quadratic-Bezier arc rising above the scalp into an upward crest.
+
+    The control point is lifted from the edge midpoint along a direction that
+    blends the outward scalp normal with a strong ``+z`` (up) bias, so the arcs
+    sprout upward like the "mohawk" of Chennu et al. (2017) rather than
+    radiating in all directions.
+    """
+    mid = (p0 + p1) / 2
+    out = mid - center
+    out = out / (np.linalg.norm(out) + 1e-12)
+    lift = out + up_bias * np.array([0.0, 0.0, 1.0])
+    lift = lift / (np.linalg.norm(lift) + 1e-12)
+    ctrl = mid + lift * height
+    t = np.linspace(0, 1, n)[:, None]
+    return (1 - t) ** 2 * p0 + 2 * (1 - t) * t * ctrl + t ** 2 * p1
+
+
+def plot_mohawk_3d(
+    conn,
+    band_idx: int,
+    pos3d: np.ndarray,
+    cfg: PlotConfig | None = None,
+    arcs: str = "strength",
+    outpath: str | None = None,
+    basename: str = "",
+    seed: int | None = None,
+    elev: float = 8.0,
+    azim: float = 45.0,
+):
+    """3D "mohawk" connectivity topograph (faithful to plothead.m / plotgraph3d.m).
+
+    A scalp surface coloured by weighted node degree, with the strongest
+    ``cfg.plot_quantile`` proportion of within-module edges drawn as arcs that
+    rise above the head (height proportional to connection strength), coloured
+    either by strength (jet) or by module.  This reproduces the signature
+    figure of Chennu et al. (2017).
+    """
+    cfg = cfg or PlotConfig()
+    matrix = np.nan_to_num(conn.matrix[band_idx].copy())
+    n = matrix.shape[0]
+
+    matrix = G.threshold_proportional(matrix, cfg.plot_quantile)
+    vsize = matrix.sum(axis=1) / (n - 1)
+    minfo, _ = G.community_louvain(matrix, seed=seed)
+
+    e0, e1 = cfg.erange
+    escaled = np.clip((matrix - e0) / (e1 - e0), 0, 1)
+
+    center = _fit_sphere(pos3d)
+    radius = np.linalg.norm(pos3d - center, axis=1).mean()
+
+    fig = plt.figure(figsize=(7, 8), facecolor="black")
+    ax = fig.add_subplot(111, projection="3d")
+    ax.set_facecolor("black")
+    ax.set_position([0, 0, 1, 1])  # fill the figure, no wasted margin
+
+    # --- scalp surface coloured by weighted degree (headplot equivalent) ---
+    u = np.linspace(0, 2 * np.pi, 60)
+    v = np.linspace(0, np.pi, 60)
+    sx = center[0] + radius * np.outer(np.cos(u), np.sin(v))
+    sy = center[1] + radius * np.outer(np.sin(u), np.sin(v))
+    sz = center[2] + radius * np.outer(np.ones_like(u), np.cos(v))
+    P = np.stack([sx, sy, sz], axis=-1)
+    field = _scalp_field(P, center, pos3d, vsize)
+    fmin, fmax = field.min(), field.max()
+    norm = (field - fmin) / (fmax - fmin + 1e-12)
+    scalp_colors = plt.get_cmap('turbo')(0.15 + 0.7 * norm)
+    ax.plot_surface(
+        sx, sy, sz, facecolors=scalp_colors, rcount=60, ccount=60,
+        linewidth=0, antialiased=True, shade=False, zorder=1,
+    )
+
+    # --- arcs (mohawk), strongest within-module edges ---
+    mod_cmap = plt.get_cmap("tab10")
+    modules = np.unique(minfo)
+    mod_color = {m: mod_cmap(i % 10) for i, m in enumerate(modules)}
+    strength_cmap = plt.get_cmap("jet")
+
+    triu = np.array(np.triu_indices(n, k=1)).T
+    weights = np.array([escaled[i, j] for i, j in triu])
+    for k in np.argsort(weights):
+        i, j = triu[k]
+        w = escaled[i, j]
+        if w <= 0:
+            continue
+        if minfo[i] != minfo[j]:
+            continue  # intra-module edges only (plotinter='off')
+        color = strength_cmap(w) if arcs == "strength" else mod_color[minfo[i]]
+        height = (0.25 + 1.0 * w) * radius  # lhfactor-like lift
+        arc = _arc3d(pos3d[i], pos3d[j], center, height)
+        ax.plot(arc[:, 0], arc[:, 1], arc[:, 2], color=color,
+                lw=0.6 + 1.4 * w, alpha=0.8, zorder=3)
+
+    # Frame the head plus the upward crest: shift the box up and keep equal
+    # aspect so the sphere is undistorted.
+    r = radius * 1.5
+    ax.set_xlim(center[0] - r, center[0] + r)
+    ax.set_ylim(center[1] - r, center[1] + r)
+    ax.set_zlim(center[2] - r * 0.7, center[2] + r * 1.3)
+    try:
+        ax.set_box_aspect((1, 1, 1), zoom=1.45)
+    except TypeError:
+        ax.set_box_aspect((1, 1, 1))
+    except Exception:
+        pass
+    ax.view_init(elev=elev, azim=azim)
+    ax.set_axis_off()
+    ax.set_title(f"{basename}: {BAND_NAMES[band_idx]} band  "
+                 f"({len(modules)} modules)", color="white", y=0.92)
+    if outpath:
+        fig.savefig(outpath, dpi=200, facecolor="black")
+        plt.close(fig)
+    return fig, minfo
+
+
+def _set_equal_3d(ax, pos, radius):
+    """Set equal aspect ratio for a 3D axis around the head."""
+    c = pos.mean(axis=0)
+    r = radius * 2.2
+    ax.set_xlim(c[0] - r, c[0] + r)
+    ax.set_ylim(c[1] - r, c[1] + r)
+    ax.set_zlim(c[2] - r, c[2] + r)
+    try:
+        ax.set_box_aspect((1, 1, 1))
+    except Exception:
+        pass
+
+
 def plot_head_network(
     conn,
     band_idx: int,

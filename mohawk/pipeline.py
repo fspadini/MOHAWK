@@ -125,7 +125,15 @@ def run_pipeline(
         figures["spectrum"] = spec_path
         for b in plot_bands:
             name = config.band_names[b]
-            net_path = os.path.join(figdir, f"{basename}_{name}_mohawk.png")
+            # signature 3D "mohawk" topograph (plothead.m)
+            mohawk_path = os.path.join(figdir, f"{basename}_{name}_mohawk.png")
+            plotting.plot_mohawk_3d(
+                conn, b, pos, config.plot, arcs="strength",
+                outpath=mohawk_path, basename=basename, seed=seed,
+            )
+            figures[f"mohawk_{name}"] = mohawk_path
+            # supplementary flat topographic network
+            net_path = os.path.join(figdir, f"{basename}_{name}_network.png")
             plotting.plot_head_network(
                 conn, b, pos, config.plot, arcs="strength",
                 outpath=net_path, basename=basename, seed=seed,

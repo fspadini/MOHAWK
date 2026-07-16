@@ -11,3 +11,10 @@ out_demo/
 out_cli/
 figures/
 *_mohawk.npz
+
+# Personal / uploaded EEG data and derived outputs — never commit
+data/
+out_real/
+run_real.py
+*.mff/
+*.mff.zip

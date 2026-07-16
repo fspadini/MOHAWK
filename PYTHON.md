@@ -140,6 +140,38 @@ expected behaviour:
   heterogeneous edge strengths — the band-specific network discrimination that
   is the point of MOHAWK.
 
+## Cross-check against the paper and real EEG
+
+The method parameters were checked directly against Chennu et al. (2017),
+*Brain* 140:2120-2132:
+
+* power estimated 0.5-45 Hz with a **multitaper method using five Slepian
+  tapers** — `tapsmofrq = 0.3` over 10 s epochs yields exactly five tapers,
+  which the port matches (`bandwidth = 0.6` Hz full-width);
+* connectivity is the **debiased weighted phase lag index (dwPLI)**, mapped to
+  MNE's `wpli2_debiased`;
+* canonical bands delta (0-4), theta (4-8), alpha (8-13) Hz;
+* dwPLI matrices proportionally thresholded across connection densities;
+* graph metrics: clustering, characteristic path length, Louvain modularity,
+  participation coefficient, and modular span — all implemented here.
+
+The pipeline was also run end-to-end on a real 128-channel EGI `.mff` recording
+(250 Hz). MNE reads the net's `coordinates.xml` directly into head coordinates,
+so no manual coordinate manipulation was needed; the 3D "mohawk" renderer fits a
+sphere to those positions. The output reproduces the paper's signature figure —
+a scalp map coloured by network hub strength with connectivity arcs rising into
+a crest above the head — and shows band-specific modular structure (e.g. fewer,
+larger modules in delta than alpha).
+
+The **3D mohawk** plot (`mohawk.plotting.plot_mohawk_3d`) is a Matplotlib
+reconstruction of the EEGLAB `headplot`-based rendering; it uses a spherical
+scalp model rather than a subject MRI mesh, but preserves the scalp power map,
+the strength/module arc colouring, and the raised-arc "mohawk" geometry.
+
+> Note: real patient EEG data is personal/health information and is **not**
+> committed to this repository (`data/`, `out_real/`, and `*.mff` are
+> git-ignored). Only synthetic example figures are included.
+
 ## Scope
 
 This port covers the **single-subject** pipeline (`mohawk.m`), which is the
