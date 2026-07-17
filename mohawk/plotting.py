@@ -128,13 +128,15 @@ def _scalp_field(P, center, elec_pos, values, sigma=0.25):
     return field / (wsum + 1e-12)
 
 
-def _arc3d(p0, p1, center, height, up_bias=1.8, n=32):
+def _arc3d(p0, p1, center, height, up_bias=2.2, n=32):
     """3D quadratic-Bezier arc rising above the scalp into an upward crest.
 
     The control point is lifted from the edge midpoint along a direction that
     blends the outward scalp normal with a strong ``+z`` (up) bias, so the arcs
     sprout upward like the "mohawk" of Chennu et al. (2017) rather than
-    radiating in all directions.
+    radiating in all directions.  ``height`` should grow with the endpoint
+    separation (done by the caller) so that long-range connections arch clear
+    over the head instead of cutting through it.
     """
     mid = (p0 + p1) / 2
     out = mid - center
@@ -155,8 +157,8 @@ def plot_mohawk_3d(
     outpath: str | None = None,
     basename: str = "",
     seed: int | None = None,
-    elev: float = 8.0,
-    azim: float = 45.0,
+    elev: float = 14.0,
+    azim: float = -40.0,
 ):
     """3D "mohawk" connectivity topograph (faithful to plothead.m / plotgraph3d.m).
 
@@ -217,19 +219,21 @@ def plot_mohawk_3d(
         if minfo[i] != minfo[j]:
             continue  # intra-module edges only (plotinter='off')
         color = strength_cmap(w) if arcs == "strength" else mod_color[minfo[i]]
-        height = (0.25 + 1.0 * w) * radius  # lhfactor-like lift
+        # lift grows with endpoint separation so long-range arcs clear the dome
+        sep = np.linalg.norm(pos3d[i] - pos3d[j])
+        height = (0.15 + 0.4 * w) * radius + 0.45 * sep
         arc = _arc3d(pos3d[i], pos3d[j], center, height)
         ax.plot(arc[:, 0], arc[:, 1], arc[:, 2], color=color,
                 lw=0.6 + 1.4 * w, alpha=0.8, zorder=3)
 
     # Frame the head plus the upward crest: shift the box up and keep equal
     # aspect so the sphere is undistorted.
-    r = radius * 1.5
+    r = radius * 1.7
     ax.set_xlim(center[0] - r, center[0] + r)
     ax.set_ylim(center[1] - r, center[1] + r)
-    ax.set_zlim(center[2] - r * 0.7, center[2] + r * 1.3)
+    ax.set_zlim(center[2] - r * 0.75, center[2] + r * 1.25)
     try:
-        ax.set_box_aspect((1, 1, 1), zoom=1.45)
+        ax.set_box_aspect((1, 1, 1), zoom=1.4)
     except TypeError:
         ax.set_box_aspect((1, 1, 1))
     except Exception:
