@@ -79,6 +79,44 @@ def test_reject_and_interpolate_protects_frontal(monkeypatch):
     assert out.info["bads"] == []
 
 
+def test_detect_narrowband_channel_single():
+    # one channel carries a narrow 25 Hz line the others do not
+    rng = np.random.default_rng(0)
+    sf, n_ep, n_ch, n_t = 250.0, 20, 12, 500
+    t = np.arange(n_t) / sf
+    data = rng.standard_normal((n_ep, n_ch, n_t)) * 1e-6
+    data[:, 4, :] += 8e-6 * np.sin(2 * np.pi * 25 * t)
+    info = mne.create_info([f"c{i}" for i in range(n_ch)], sf, "eeg")
+    ep = mne.EpochsArray(data, info, verbose="ERROR")
+    bad = artifacts.detect_narrowband_channels(ep, ArtifactConfig())
+    assert "c4" in bad
+
+
+def test_detect_narrowband_ignores_shared_rhythm():
+    # a rhythm present on ALL channels is not a single-channel outlier
+    rng = np.random.default_rng(1)
+    sf, n_ep, n_ch, n_t = 250.0, 20, 12, 500
+    t = np.arange(n_t) / sf
+    data = rng.standard_normal((n_ep, n_ch, n_t)) * 1e-6
+    for c in range(n_ch):
+        data[:, c, :] += 3e-6 * np.sin(2 * np.pi * 10 * t + rng.uniform(0, 6.28))
+    info = mne.create_info([f"c{i}" for i in range(n_ch)], sf, "eeg")
+    ep = mne.EpochsArray(data, info, verbose="ERROR")
+    assert artifacts.detect_narrowband_channels(ep, ArtifactConfig()) == []
+
+
+def test_detect_narrowband_can_be_disabled():
+    rng = np.random.default_rng(2)
+    sf, n_ep, n_ch, n_t = 250.0, 10, 12, 500
+    t = np.arange(n_t) / sf
+    data = rng.standard_normal((n_ep, n_ch, n_t)) * 1e-6
+    data[:, 3, :] += 8e-6 * np.sin(2 * np.pi * 25 * t)
+    info = mne.create_info([f"c{i}" for i in range(n_ch)], sf, "eeg")
+    ep = mne.EpochsArray(data, info, verbose="ERROR")
+    cfg = ArtifactConfig(detect_narrowband=False)
+    assert artifacts.detect_narrowband_channels(ep, cfg) == []
+
+
 def test_reject_and_interpolate_runs():
     ep = _epochs_with(16, seed=4)
     out = artifacts.reject_and_interpolate(ep, ArtifactConfig())

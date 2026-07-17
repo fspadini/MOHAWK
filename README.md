@@ -1,5 +1,10 @@
 # Introduction
 
+> **Python / MNE port:** a fully-automated Python reimplementation of this
+> pipeline (built on MNE-Python) lives in the [`mohawk/`](mohawk) package.
+> See **[PYTHON.md](PYTHON.md)** for setup and usage — including a step-by-step
+> section on **running it against EGI `.mff` recordings**.
+
 MOHAWK is a software prototype that brings together state of the art computational analysis of brain activity to benefit patients with severe brain injury at their bedside. This prototype includes algorithms to visualise and measure networks of brain activity in such patients. These outputs are designed to enable clinicians better diagnose the state of awareness in patients, and prognosticate recovery from disorders of consciousness.
 
 These networks are estimated by applying sophisticated signal processing methods to electrical activity data collected from patients' brains at their bedside, in collaboration with clinical partners. We have developed and validated metrics to characterise the networks measured with these data. Further, our pipeline applies machine learning to automatically classify the state of consciousness in individual patients based on their brain networks. Most importantly, the software prototype has been designed in such a way that it can be deployed along with high-density EEG systems at the bedside in rehabilitation centres where patients are resident.

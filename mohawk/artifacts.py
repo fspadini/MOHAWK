@@ -82,6 +82,62 @@ def detect_bad_channels(
     return [epochs.ch_names[i] for i in np.flatnonzero(bad_mask)]
 
 
+def detect_narrowband_channels(
+    epochs: mne.Epochs, cfg: ArtifactConfig | None = None
+) -> list[str]:
+    """Detect channels with a narrowband spectral peak the others do not share.
+
+    Single-channel line-like artefacts (e.g. a ~25 Hz electronic spike) barely
+    raise a channel's broadband variance, so ``detect_bad_channels`` misses
+    them.  Here the per-channel power spectrum is compared to the across-channel
+    consensus (median at each frequency): a channel is flagged if its power
+    exceeds the consensus by more than ``cfg.narrowband_db`` at some frequency
+    *and* that excess is a robust-z outlier across channels.  Because genuine
+    rhythms such as posterior alpha are present on (most) channels, they sit
+    near the consensus and are not flagged.
+    """
+    cfg = cfg or ArtifactConfig()
+    if not cfg.detect_narrowband:
+        return []
+    from mne.time_frequency import psd_array_welch
+    from scipy.ndimage import median_filter
+
+    data = epochs.get_data(copy=False)  # (n_epochs, n_ch, n_times)
+    sfreq = epochs.info["sfreq"]
+    if data.shape[1] < 4:
+        return []  # need enough channels to form a consensus
+
+    n_per_seg = int(min(data.shape[-1], sfreq * 2))  # ~0.5 Hz resolution
+    psds, freqs = psd_array_welch(
+        data, sfreq, fmin=1.0, fmax=min(45.0, sfreq / 2 - 1),
+        n_fft=n_per_seg, n_per_seg=n_per_seg, verbose="ERROR",
+    )
+    psd = psds.mean(axis=0)  # (n_ch, n_freq)
+    logpsd = 10 * np.log10(psd + 1e-30)
+
+    # Isolate NARROW peaks: subtract each channel's own frequency-smoothed
+    # baseline. This removes the smooth 1/f slope and broad rhythms (e.g. the
+    # several-Hz-wide alpha peak), leaving only narrow, line-like excesses.
+    df = float(np.median(np.diff(freqs)))
+    win = max(3, int(round(4.0 / df)) | 1)  # ~4 Hz window, odd length
+    baseline = median_filter(logpsd, size=(1, win), mode="nearest")
+    resid = logpsd - baseline
+    resid[resid < 0] = 0.0
+    peak_resid = resid.max(axis=1)  # strongest narrowband peak per channel (dB)
+
+    z = _robust_z(peak_resid)
+    bad_mask = (peak_resid > cfg.narrowband_db) & (z > cfg.narrowband_zthresh)
+
+    max_bad = int(np.floor(len(epochs.ch_names) * cfg.max_bad_channel_frac))
+    if bad_mask.sum() > max_bad:
+        order = np.argsort(-peak_resid)
+        keep = order[:max_bad]
+        new_mask = np.zeros_like(bad_mask)
+        new_mask[keep] = True
+        bad_mask = new_mask
+    return [epochs.ch_names[i] for i in np.flatnonzero(bad_mask)]
+
+
 def detect_bad_epochs(
     epochs: mne.Epochs, cfg: ArtifactConfig | None = None
 ) -> list[int]:
@@ -111,6 +167,9 @@ def reject_and_interpolate(
     epochs = epochs.copy()
 
     bad_ch = detect_bad_channels(epochs, cfg)
+    for nb in detect_narrowband_channels(epochs, cfg):
+        if nb not in bad_ch:
+            bad_ch.append(nb)
     if protect_frontal:
         proxy = _frontal_proxy(epochs)
         bad_ch = [b for b in bad_ch if b != proxy]

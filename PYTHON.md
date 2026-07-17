@@ -77,6 +77,70 @@ from mohawk import run_pipeline
 result = run_pipeline(synthetic_raw(), basename="demo", outdir="out")
 ```
 
+## Running on EGI MFF recordings
+
+This is the path for recordings like a modern EGI net export
+(`Subject_070225.mff`).
+
+**1. An `.mff` is a folder, not a single file.** If yours arrived as a `.zip`,
+unzip it so you end up with a directory whose name ends in `.mff` and which
+contains `signal1.bin`, `info.xml`, `coordinates.xml`, `sensorLayout.xml`, etc.:
+
+```bash
+mkdir Subject_070225.mff
+unzip Subject_070225.mff.zip -d Subject_070225.mff
+# verify the files landed directly inside (not in a nested subfolder):
+ls Subject_070225.mff        # -> signal1.bin  info.xml  coordinates.xml  ...
+```
+
+The folder **must** keep the `.mff` extension — that is how the reader
+recognises the format.
+
+**2. Run the pipeline** — command line:
+
+```bash
+uv run mohawk Subject_070225.mff -n subject -o out_subject
+```
+
+or from Python:
+
+```python
+from mohawk import run_pipeline, save_results
+result = run_pipeline("Subject_070225.mff", basename="subject", outdir="out_subject")
+save_results(result, "out_subject")
+```
+
+**3. What happens automatically** for these nets:
+
+* the sensor montage is read straight from the net's `coordinates.xml` (no
+  manual coordinate work needed, even for modern high-density nets);
+* the flat online-reference channel (`REF CZ`) is dropped;
+* noisy channels, narrowband-artefact channels, and bad epochs are removed
+  automatically, and ICA removes ocular/muscle components;
+* figures are written to `out_subject/figures/` (log spectrum, per-band 3D
+  "mohawk" topograph, flat network, connectivity matrices) and the numeric
+  results to `out_subject/subject_mohawk.npz`.
+
+**Line-noise frequency.** The default notch is **50 Hz** (Europe). For 60 Hz
+mains, override it:
+
+```python
+from mohawk.config import MohawkConfig
+cfg = MohawkConfig()
+cfg.preproc.line_freq = 60.0
+result = run_pipeline("Subject.mff", basename="subject", outdir="out", config=cfg)
+```
+
+**Useful CLI options:** `--montage standard_1005` to force a montage,
+`--trials 60` to fix the number of retained epochs (default 60; `0` keeps all),
+`--no-graph` to skip the slow graph metrics, `--heuristic N` to set the number
+of Louvain repetitions. Run `uv run mohawk --help` for the full list.
+
+**Tuning the automatic rejection.** Every threshold lives in `ArtifactConfig`
+(`mohawk/config.py`) and can be overridden on the config passed to
+`run_pipeline`, e.g. `cfg.artifact.narrowband_db = 5.0` to be stricter about
+narrowband artefacts, or `cfg.artifact.hi_var_zthresh = 2.5` for noisy channels.
+
 ## MATLAB → Python mapping
 
 | MATLAB source | Python location | Notes |
@@ -114,6 +178,14 @@ now automatic:
   threshold of 3 for *noisy* (high-variance) channels, plus flat-channel
   detection. Bad channels are interpolated from the montage, high-variance
   epochs dropped.
+* **Narrowband spectral outliers** — single-channel line-like peaks (e.g. a
+  ~25 Hz electronic spike on one electrode) barely raise broadband variance, so
+  they slip past the variance test. Each channel's power spectrum is compared to
+  its own frequency-smoothed baseline to isolate *narrow* peaks, then to the
+  across-channel consensus; a channel is flagged only if a narrow peak exceeds
+  `narrowband_db` (default 6 dB) and is a robust-z outlier across channels.
+  Genuine rhythms shared across channels (posterior alpha) sit near the
+  consensus and are never flagged. Flagged channels are interpolated.
 * **ICA components** — FastICA components are scored by MNE's muscle-artefact
   heuristic and by correlation with a frontal channel used as an EOG proxy.
   The proxy is found by flexible name matching (`Fp1`, `FP1`, `129 FP1`, EGI

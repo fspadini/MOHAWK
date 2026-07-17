@@ -81,6 +81,10 @@ class ArtifactConfig:
     max_bad_channel_frac: float = 0.25 # safety cap on channels removed
     epoch_zthresh: float = 4.0         # z threshold for dropping noisy epochs
     drop_reference: bool = True        # drop flat / reference (e.g. "REF CZ") channels
+    # narrowband spectral-outlier detection (single-channel line-like peaks)
+    detect_narrowband: bool = True
+    narrowband_db: float = 6.0         # min excess over the across-channel consensus (dB)
+    narrowband_zthresh: float = 4.0    # robust-z of that excess across channels
     n_ica_components: float = 0.99     # explained-variance for ICA (computeic)
     ica_random_state: int = 42
     eog_threshold: float = 3.0         # z threshold for ICA EOG (blink) detection
