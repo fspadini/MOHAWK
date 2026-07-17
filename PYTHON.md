@@ -106,14 +106,28 @@ hard-coded across the MATLAB sources.
 The original app paused for two interactive tasks. To run end-to-end these are
 now automatic:
 
+* **Reference / flat channels** — modern EGI nets carry the online reference as
+  an all-zero channel (e.g. `REF CZ`); it is dropped up front so it cannot
+  corrupt the variance statistics, the average reference, or connectivity.
 * **Bad channels / epochs** — flagged by robust (median/MAD) variance
-  z-scoring at the original threshold of 4; bad channels are interpolated from
-  the montage, high-variance epochs dropped. (`mohawk/artifacts.py`)
+  z-scoring: the original two-tailed threshold of 4, plus a stricter one-sided
+  threshold of 3 for *noisy* (high-variance) channels, plus flat-channel
+  detection. Bad channels are interpolated from the montage, high-variance
+  epochs dropped.
 * **ICA components** — FastICA components are scored by MNE's muscle-artefact
-  heuristic and by correlation with a frontal channel used as an EOG proxy;
-  flagged components are removed automatically.
+  heuristic and by correlation with a frontal channel used as an EOG proxy.
+  The proxy is found by flexible name matching (`Fp1`, `FP1`, `129 FP1`, EGI
+  `E22`, …) with a most-anterior-electrode fallback, and — crucially — that
+  frontal channel is **protected from interpolation**, since blinks make it
+  high-variance and interpolating it would erase the very signal ICA needs to
+  detect ocular components. Flagged components are removed automatically.
 
-Both are configurable via `ArtifactConfig` in `mohawk/config.py`.
+All thresholds are configurable via `ArtifactConfig` in `mohawk/config.py`.
+
+On the real 128-channel recording this tuning drops the flat `REF CZ`,
+interpolates the genuinely noisy channels (e.g. the ones at variance z > 5),
+and removes three ICA components including a blink component correlating 0.97
+with the frontal channel — versus zero components before tuning.
 
 ## Tests
 

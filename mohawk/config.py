@@ -76,10 +76,14 @@ class ArtifactConfig:
     add automatic ICA artefact detection.
     """
 
-    var_zthresh: float = 4.0           # rejartifacts z threshold
+    var_zthresh: float = 4.0           # rejartifacts z threshold (both tails)
+    hi_var_zthresh: float = 3.0        # stricter one-sided threshold for noisy (high-variance) channels
     max_bad_channel_frac: float = 0.25 # safety cap on channels removed
+    epoch_zthresh: float = 4.0         # z threshold for dropping noisy epochs
+    drop_reference: bool = True        # drop flat / reference (e.g. "REF CZ") channels
     n_ica_components: float = 0.99     # explained-variance for ICA (computeic)
     ica_random_state: int = 42
+    eog_threshold: float = 3.0         # z threshold for ICA EOG (blink) detection
 
 
 @dataclass

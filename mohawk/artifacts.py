@@ -25,14 +25,40 @@ def _robust_z(x: np.ndarray) -> np.ndarray:
     return (x - med) / (1.4826 * mad)
 
 
+def drop_reference_channels(inst, cfg: ArtifactConfig | None = None) -> list[str]:
+    """Drop flat / reference channels (e.g. an all-zero ``"REF CZ"``).
+
+    Modern EGI nets carry the online reference as a flat channel; it must be
+    removed before it corrupts the variance statistics, the average reference,
+    and connectivity. Returns the dropped channel names.
+    """
+    cfg = cfg or ArtifactConfig()
+    if not cfg.drop_reference:
+        return []
+    data = inst.get_data()
+    std = data.std(axis=-1)
+    if data.ndim == 3:  # epochs: (n_epochs, n_ch, n_times)
+        std = data.std(axis=(0, 2))
+    flat = std < 1e-15
+    named_ref = np.array([
+        ("REF" in ch.upper()) or ("VREF" in ch.upper()) for ch in inst.ch_names
+    ])
+    drop = [inst.ch_names[i] for i in np.flatnonzero(flat | named_ref)]
+    if drop:
+        inst.drop_channels(drop)
+    return drop
+
+
 def detect_bad_channels(
     epochs: mne.Epochs, cfg: ArtifactConfig | None = None
 ) -> list[str]:
-    """Detect noisy channels by variance z-scoring (rejartifacts, threshold 4).
+    """Detect noisy channels by variance z-scoring (rejartifacts).
 
-    A channel is flagged if its (log) variance across all epochs is a robust
-    z-score outlier beyond ``cfg.var_zthresh``, or if it is effectively flat.
-    The fraction removed is capped at ``cfg.max_bad_channel_frac``.
+    A channel is flagged if the robust z-score of its log-variance is an
+    outlier beyond ``cfg.var_zthresh`` (either tail), or beyond the stricter
+    one-sided ``cfg.hi_var_zthresh`` on the *high* side (noisy channels are more
+    common than pathologically quiet ones), or if it is effectively flat. The
+    fraction removed is capped at ``cfg.max_bad_channel_frac``.
     """
     cfg = cfg or ArtifactConfig()
     data = epochs.get_data(copy=False)  # (n_epochs, n_ch, n_times)
@@ -42,7 +68,7 @@ def detect_bad_channels(
     z = _robust_z(logvar)
 
     flat = var < (np.median(var) * 1e-3)
-    bad_mask = (np.abs(z) > cfg.var_zthresh) | flat
+    bad_mask = (np.abs(z) > cfg.var_zthresh) | (z > cfg.hi_var_zthresh) | flat
 
     # Cap how many channels we are willing to drop.
     max_bad = int(np.floor(len(epochs.ch_names) * cfg.max_bad_channel_frac))
@@ -64,21 +90,30 @@ def detect_bad_epochs(
     data = epochs.get_data(copy=False)
     ep_var = data.reshape(data.shape[0], -1).var(axis=1)
     z = _robust_z(np.log(ep_var + np.finfo(float).eps))
-    return list(np.flatnonzero(z > cfg.var_zthresh))
+    return list(np.flatnonzero(z > cfg.epoch_zthresh))
 
 
 def reject_and_interpolate(
-    epochs: mne.Epochs, cfg: ArtifactConfig | None = None
+    epochs: mne.Epochs, cfg: ArtifactConfig | None = None,
+    protect_frontal: bool = True,
 ) -> mne.Epochs:
     """Mark bad channels, interpolate them, and drop bad epochs.
 
     Combines both ``rejartifacts`` passes: bad channels are interpolated
     (requires a montage) and high-variance epochs are dropped.
+
+    Frontal channels are legitimately high-variance because of eye blinks, so
+    when ``protect_frontal`` is set the EOG-proxy channel is kept out of the
+    bad list — otherwise interpolation would erase the very blink signal that
+    the ICA step relies on to detect ocular components.
     """
     cfg = cfg or ArtifactConfig()
     epochs = epochs.copy()
 
     bad_ch = detect_bad_channels(epochs, cfg)
+    if protect_frontal:
+        proxy = _frontal_proxy(epochs)
+        bad_ch = [b for b in bad_ch if b != proxy]
     if bad_ch:
         epochs.info["bads"] = bad_ch
         has_pos = epochs.get_montage() is not None
@@ -133,7 +168,8 @@ def run_ica(
     if frontal is not None:
         try:
             eog_idx, _ = ica.find_bads_eog(
-                epochs, ch_name=frontal, verbose="ERROR"
+                epochs, ch_name=frontal, threshold=cfg.eog_threshold,
+                verbose="ERROR",
             )
             exclude.update(eog_idx)
         except Exception:
@@ -145,9 +181,29 @@ def run_ica(
 
 
 def _frontal_proxy(epochs: mne.Epochs) -> str | None:
-    """Pick a frontal channel to serve as an EOG proxy, if available."""
-    candidates = ["Fp1", "Fp2", "Fpz", "AF7", "AF8", "E22", "E9", "E14"]
-    for ch in candidates:
+    """Pick a frontal channel to serve as an EOG proxy, if available.
+
+    Handles arbitrary naming (``Fp1``, ``FP1``, ``129 FP1``, EGI ``E22`` …) by
+    substring match, then falls back to the most anterior channel in the
+    montage so blink detection still runs on nets without named frontal sites.
+    """
+    tokens = ("FP1", "FPZ", "FP2", "AF7", "AF8", "AFZ", "FZ")
+    compact = {ch: ch.upper().replace(" ", "") for ch in epochs.ch_names}
+    for token in tokens:
+        for ch, name in compact.items():
+            if token in name:
+                return ch
+    for ch in ("E22", "E9", "E14", "E15"):  # EGI frontopolar sites
         if ch in epochs.ch_names:
             return ch
+    # fallback: most anterior (max +y) channel from the montage
+    montage = epochs.get_montage()
+    if montage is not None:
+        pos = montage.get_positions()["ch_pos"]
+        best, best_y = None, -np.inf
+        for ch in epochs.ch_names:
+            p = pos.get(ch)
+            if p is not None and np.isfinite(p).all() and p[1] > best_y:
+                best_y, best = p[1], ch
+        return best
     return None

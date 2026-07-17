@@ -83,6 +83,9 @@ def run_pipeline(
     if raw.get_montage() is None or montage is not None:
         io.set_montage(raw, montage)
     io.remove_peripheral_channels(raw)
+    # drop flat / online-reference channels (e.g. EGI "REF CZ") before they
+    # corrupt the variance statistics and the average reference
+    dropped_ref = artifacts.drop_reference_channels(raw, config.artifact)
 
     # 2. Preprocess (resample, band-pass, line noise)
     preprocess.preprocess_raw(raw, config.preproc)
