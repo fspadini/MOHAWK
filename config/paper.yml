@@ -4,7 +4,7 @@ preproc:
   resample_sfreq: 250.0
   hp_freq: 0.5
   lp_freq: 45.0
-  line_freq: 50.0        # set 60.0 for 60 Hz mains
+  line_freq: auto        # detect 50 vs 60 Hz mains from the data
   epoch_length: 10.0
 
 spectrum:

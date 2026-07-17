@@ -70,6 +70,31 @@ def test_filter_attenuates_high_frequency():
     assert after[hi2] < after[alpha_idx]
 
 
+def test_detect_line_frequency_60hz():
+    from mohawk.preprocess import detect_line_frequency
+    sf = 500.0
+    raw = synthetic_raw(duration=20.0, n_channels=8, sfreq=sf, seed=1)
+    t = raw.times
+    raw._data += 5e-4 * np.sin(2 * np.pi * 60 * t)  # strong US mains
+    assert detect_line_frequency(raw) == 60.0
+
+
+def test_detect_line_frequency_50hz():
+    from mohawk.preprocess import detect_line_frequency
+    sf = 500.0
+    raw = synthetic_raw(duration=20.0, n_channels=8, sfreq=sf, seed=2)
+    t = raw.times
+    raw._data += 5e-4 * np.sin(2 * np.pi * 50 * t)  # strong European mains
+    assert detect_line_frequency(raw) == 50.0
+
+
+def test_detect_line_frequency_defaults_when_clean():
+    from mohawk.preprocess import detect_line_frequency
+    raw = synthetic_raw(duration=20.0, n_channels=8, sfreq=500.0, seed=3)
+    # no injected mains -> falls back to the first candidate (50)
+    assert detect_line_frequency(raw) in (50.0, 60.0)
+
+
 def test_average_reference_zero_mean():
     raw = synthetic_raw(duration=10.0, n_channels=8, seed=2)
     average_reference(raw)

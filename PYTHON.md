@@ -121,15 +121,12 @@ save_results(result, "out_subject")
   "mohawk" topograph, flat network, connectivity matrices) and the numeric
   results to `out_subject/subject_mohawk.npz`.
 
-**Line-noise frequency.** The default notch is **50 Hz** (Europe). For 60 Hz
-mains, override it:
-
-```python
-from mohawk.config import MohawkConfig
-cfg = MohawkConfig()
-cfg.preproc.line_freq = 60.0
-result = run_pipeline("Subject.mff", basename="subject", outdir="out", config=cfg)
-```
+**Line-noise frequency.** The mains frequency is **auto-detected** (50 Hz
+Europe vs 60 Hz US) from each recording's spectrum, so no configuration is
+needed. To force it, set `cfg.preproc.line_freq = 60.0` (or `50.0`). Note that
+because the pipeline low-passes at 45 Hz, both 50 and 60 Hz already fall outside
+the analysis band — the notch mainly matters if you raise the low-pass for
+high-gamma work.
 
 **Useful CLI options:** `--montage standard_1005` to force a montage,
 `--trials 60` to fix the number of retained epochs (default 60; `0` keeps all),

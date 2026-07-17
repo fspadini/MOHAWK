@@ -33,7 +33,9 @@ class PreprocConfig:
     resample_sfreq: float = 250.0      # pop_resample(EEG, 250)
     hp_freq: float = 0.5               # high-pass, hpfreq in dataimport.m
     lp_freq: float = 45.0              # low-pass, lpfreq in dataimport.m
-    line_freq: float = 50.0            # rmlinenoisemt(EEG, 50)
+    # Mains frequency for the notch. "auto" detects 50 vs 60 Hz from the data
+    # (US = 60, Europe = 50); a number forces it.
+    line_freq: "float | str" = "auto"
     epoch_length: float = 10.0         # epochlength in epochdata.m (seconds)
 
 
