@@ -9,6 +9,7 @@ __pycache__/
 uv.lock
 out_demo/
 out_cli/
+out_*/
 figures/
 *_mohawk.npz
 
