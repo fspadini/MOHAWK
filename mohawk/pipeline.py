@@ -52,8 +52,12 @@ def run_pipeline(
     make_figures: bool = True,
     plot_bands=(0, 1, 2),
     seed: int | None = 42,
+    auto_reject: bool = True,
+    bad_channels=(),
+    bad_segments=(),
+    ica_exclude=None,
 ) -> PipelineResult:
-    """Run the complete automated pipeline.
+    """Run the complete pipeline.
 
     Parameters
     ----------
@@ -67,6 +71,26 @@ def run_pipeline(
         Retain this many least-variable epochs (checktrials.m); None keeps all.
     plot_bands : sequence of int
         Band indices to render as head-network plots (default delta/theta/alpha).
+    auto_reject : bool
+        When True (default) run automatic artefact rejection and ICA. Set False
+        for **faithful mode**, in which the paper's manual quality control is
+        reproduced from the caller's own review decisions.
+    bad_channels : sequence of str
+        Manually-selected channels to interpolate (applied in both modes).
+    bad_segments : sequence of (onset, duration) or (onset, duration, label)
+        Manually-marked bad time windows (seconds); epochs overlapping them are
+        dropped.
+    ica_exclude : sequence of int | None
+        Reviewed ICA component indices to remove. When given, ICA is fit and
+        exactly these are excluded; when None in faithful mode, ICA is skipped.
+
+    Notes
+    -----
+    Automatic rejection is a practical substitute for the paper's manual review
+    of channels, epochs and ICA components; it is **not** what the original
+    study did. For a faithful replication pass ``auto_reject=False`` together
+    with your reviewed ``bad_channels`` / ``bad_segments`` / ``ica_exclude``
+    (see :func:`mohawk.artifacts.suggest_variance_outliers` for a review list).
     """
     config = config or MohawkConfig()
     outdir = outdir or os.getcwd()
@@ -90,12 +114,29 @@ def run_pipeline(
     # 2. Preprocess (resample, band-pass, line noise)
     preprocess.preprocess_raw(raw, config.preproc)
 
-    # 3. Epoch
+    # optional manually-marked bad time windows (faithful mode)
+    if bad_segments:
+        onsets, durations, descs = [], [], []
+        for seg in bad_segments:
+            onsets.append(seg[0]); durations.append(seg[1])
+            descs.append(seg[2] if len(seg) > 2 else "BAD_manual")
+        raw.set_annotations(
+            raw.annotations + mne.Annotations(onsets, durations, descs)
+        )
+
+    # 3. Epoch (dropping epochs overlapping BAD_ annotations)
     epochs = epoching.make_epochs(raw, config.preproc)
 
-    # 4. Automatic artefact rejection (bad channels/epochs) + ICA
-    epochs = artifacts.reject_and_interpolate(epochs, config.artifact)
-    epochs, _ica, ica_excluded = artifacts.run_ica(epochs, config.artifact)
+    # 4. Artefact rejection (auto and/or manual) + ICA
+    epochs = artifacts.reject_and_interpolate(
+        epochs, config.artifact, auto=auto_reject, manual_bads=bad_channels
+    )
+    if auto_reject or ica_exclude is not None:
+        epochs, _ica, ica_excluded = artifacts.run_ica(
+            epochs, config.artifact, auto=auto_reject, exclude=ica_exclude
+        )
+    else:
+        ica_excluded = []
 
     # 5. Average reference
     preprocess.average_reference(epochs)
@@ -165,6 +206,7 @@ def save_results(result: PipelineResult, outdir: str | None = None) -> str:
         freqs=result.spectrum.freqs,
         spectra=result.spectrum.spectra,
         band_power=result.spectrum.band_power,
+        relative_power=result.spectrum.relative_power,
         matrix=result.connectivity.matrix,
         chan_wpli=result.connectivity.chan_wpli,
         ch_names=np.array(result.spectrum.ch_names),

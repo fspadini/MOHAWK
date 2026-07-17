@@ -70,3 +70,41 @@ def test_pipeline_no_figures_no_graph(tmp_path):
     )
     assert res.graph is None
     assert res.figures == {}
+
+
+def test_pipeline_faithful_mode(tmp_path):
+    """Faithful mode: no auto rejection, honour explicit manual inputs."""
+    raw = synthetic_raw(duration=80.0, n_channels=16, seed=1)
+    res = run_pipeline(
+        raw, basename="f", outdir=str(tmp_path), config=_fast_config(),
+        set_trials=4, make_figures=False, compute_graph=False, seed=1,
+        auto_reject=False, bad_channels=["E10"],
+        bad_segments=[(5.0, 3.0)], ica_exclude=[0],
+    )
+    # exactly the requested ICA component is excluded; channel interpolated
+    assert res.ica_excluded == [0]
+    assert len(res.epochs.ch_names) == 16
+
+
+def test_pipeline_faithful_mode_no_ica(tmp_path):
+    raw = synthetic_raw(duration=60.0, n_channels=12, seed=2)
+    res = run_pipeline(
+        raw, basename="g", outdir=str(tmp_path), config=_fast_config(),
+        set_trials=3, make_figures=False, compute_graph=False, seed=2,
+        auto_reject=False,
+    )
+    assert res.ica_excluded == []  # ICA skipped entirely
+
+
+def test_subject_features_from_pipeline(tmp_path):
+    from mohawk import SubjectFeatures
+    raw = synthetic_raw(duration=70.0, n_channels=16, seed=4)
+    res = run_pipeline(
+        raw, basename="s", outdir=str(tmp_path), config=_fast_config(),
+        set_trials=4, make_figures=False, compute_graph=True, seed=4,
+    )
+    sf = SubjectFeatures.from_result(res)
+    path = sf.save(tmp_path / "s_features.npz")
+    loaded = SubjectFeatures.load(path)
+    assert loaded.participation.shape == sf.participation.shape
+    assert loaded.relative_power.shape[1] == 16

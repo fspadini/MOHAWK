@@ -20,7 +20,10 @@ from .config import (
     BAND_NAMES,
     FREQ_BANDS,
     MohawkConfig,
+    config_from_dict,
+    load_config,
 )
+from .features import SubjectFeatures
 from .pipeline import PipelineResult, run_pipeline, save_results
 
 __version__ = "0.1.0"
@@ -29,7 +32,10 @@ __all__ = [
     "run_pipeline",
     "save_results",
     "PipelineResult",
+    "SubjectFeatures",
     "MohawkConfig",
+    "load_config",
+    "config_from_dict",
     "FREQ_BANDS",
     "BAND_NAMES",
     "__version__",

@@ -25,6 +25,25 @@ def _robust_z(x: np.ndarray) -> np.ndarray:
     return (x - med) / (1.4826 * mad)
 
 
+def suggest_variance_outliers(
+    epochs: mne.Epochs, cfg: ArtifactConfig | None = None
+) -> tuple[list[str], list[int]]:
+    """Suggest noisy channels and epochs *without mutating the data*.
+
+    The original paper required visual confirmation of every rejected channel,
+    epoch and ICA component. This mirrors that workflow: it returns a review
+    list (bad channels, bad epochs) that a human can inspect and pass back to
+    ``run_pipeline`` in faithful mode, rather than rejecting anything itself.
+    """
+    cfg = cfg or ArtifactConfig()
+    bad_ch = detect_bad_channels(epochs, cfg)
+    for nb in detect_narrowband_channels(epochs, cfg):
+        if nb not in bad_ch:
+            bad_ch.append(nb)
+    bad_ep = detect_bad_epochs(epochs, cfg)
+    return bad_ch, bad_ep
+
+
 def drop_reference_channels(inst, cfg: ArtifactConfig | None = None) -> list[str]:
     """Drop flat / reference channels (e.g. an all-zero ``"REF CZ"``).
 
@@ -152,6 +171,8 @@ def detect_bad_epochs(
 def reject_and_interpolate(
     epochs: mne.Epochs, cfg: ArtifactConfig | None = None,
     protect_frontal: bool = True,
+    auto: bool = True,
+    manual_bads: "list[str] | tuple" = (),
 ) -> mne.Epochs:
     """Mark bad channels, interpolate them, and drop bad epochs.
 
@@ -160,19 +181,28 @@ def reject_and_interpolate(
 
     Frontal channels are legitimately high-variance because of eye blinks, so
     when ``protect_frontal`` is set the EOG-proxy channel is kept out of the
-    bad list — otherwise interpolation would erase the very blink signal that
-    the ICA step relies on to detect ocular components.
+    *auto-detected* bad list — otherwise interpolation would erase the very
+    blink signal that the ICA step relies on to detect ocular components.
+
+    ``auto`` toggles automatic detection; ``manual_bads`` are channels the
+    caller has selected by hand (always interpolated, and never protected).
+    In faithful mode set ``auto=False`` and pass reviewed ``manual_bads``.
     """
     cfg = cfg or ArtifactConfig()
     epochs = epochs.copy()
 
-    bad_ch = detect_bad_channels(epochs, cfg)
-    for nb in detect_narrowband_channels(epochs, cfg):
-        if nb not in bad_ch:
-            bad_ch.append(nb)
-    if protect_frontal:
-        proxy = _frontal_proxy(epochs)
-        bad_ch = [b for b in bad_ch if b != proxy]
+    bad_ch: list[str] = []
+    if auto:
+        bad_ch = detect_bad_channels(epochs, cfg)
+        for nb in detect_narrowband_channels(epochs, cfg):
+            if nb not in bad_ch:
+                bad_ch.append(nb)
+        if protect_frontal:
+            proxy = _frontal_proxy(epochs)
+            bad_ch = [b for b in bad_ch if b != proxy]
+    for mb in manual_bads:
+        if mb in epochs.ch_names and mb not in bad_ch:
+            bad_ch.append(mb)
     if bad_ch:
         epochs.info["bads"] = bad_ch
         has_pos = epochs.get_montage() is not None
@@ -181,21 +211,25 @@ def reject_and_interpolate(
         else:
             epochs.drop_channels(bad_ch)
 
-    bad_ep = detect_bad_epochs(epochs, cfg)
-    if bad_ep:
-        epochs.drop(bad_ep, reason="VARIANCE", verbose="ERROR")
+    if auto:
+        bad_ep = detect_bad_epochs(epochs, cfg)
+        if bad_ep:
+            epochs.drop(bad_ep, reason="VARIANCE", verbose="ERROR")
 
     return epochs
 
 
 def run_ica(
-    epochs: mne.Epochs, cfg: ArtifactConfig | None = None
+    epochs: mne.Epochs, cfg: ArtifactConfig | None = None,
+    auto: bool = True, exclude: "list[int] | None" = None,
 ) -> tuple[mne.Epochs, ICA, list[int]]:
-    """Fit ICA and automatically remove artefact components (computeic/rejectic).
+    """Fit ICA and remove artefact components (computeic/rejectic).
 
-    Automatic detection uses MNE's muscle-artefact heuristic plus a frontal
-    EOG proxy for eye movements.  Returns the cleaned epochs, the fitted ICA,
-    and the list of excluded component indices.
+    In automatic mode (``auto=True`` and no explicit ``exclude``), components
+    are detected with MNE's muscle-artefact heuristic plus a frontal EOG proxy.
+    In faithful mode pass reviewed component indices via ``exclude`` (and
+    optionally ``auto=False``); ICA is fit and exactly those are removed.
+    Returns the cleaned epochs, the fitted ICA, and the excluded indices.
     """
     cfg = cfg or ArtifactConfig()
     n_ch = len(mne.pick_types(epochs.info, eeg=True))
@@ -204,37 +238,41 @@ def run_ica(
         cfg.n_ica_components, int
     ) else cfg.n_ica_components
 
+    fit_params = {"extended": cfg.ica_extended} if cfg.ica_method == "infomax" else None
     ica = ICA(
         n_components=n_components,
-        method="fastica",
+        method=cfg.ica_method,
+        fit_params=fit_params,
         random_state=cfg.ica_random_state,
         max_iter="auto",
         verbose="ERROR",
     )
     ica.fit(epochs, verbose="ERROR")
 
-    exclude: set[int] = set()
-
-    # Muscle artefacts (spectral slope heuristic).
-    try:
-        muscle_idx, _ = ica.find_bads_muscle(epochs, verbose="ERROR")
-        exclude.update(muscle_idx)
-    except Exception:
-        pass
-
-    # Eye-movement artefacts via a frontal channel as EOG proxy.
-    frontal = _frontal_proxy(epochs)
-    if frontal is not None:
+    chosen: set[int] = set()
+    if exclude is not None:
+        # faithful mode: use exactly the reviewed component indices
+        chosen.update(int(i) for i in exclude if 0 <= int(i) < ica.n_components_)
+    elif auto:
+        # Muscle artefacts (spectral slope heuristic).
         try:
-            eog_idx, _ = ica.find_bads_eog(
-                epochs, ch_name=frontal, threshold=cfg.eog_threshold,
-                verbose="ERROR",
-            )
-            exclude.update(eog_idx)
+            muscle_idx, _ = ica.find_bads_muscle(epochs, verbose="ERROR")
+            chosen.update(muscle_idx)
         except Exception:
             pass
+        # Eye-movement artefacts via a frontal channel as EOG proxy.
+        frontal = _frontal_proxy(epochs)
+        if frontal is not None:
+            try:
+                eog_idx, _ = ica.find_bads_eog(
+                    epochs, ch_name=frontal, threshold=cfg.eog_threshold,
+                    verbose="ERROR",
+                )
+                chosen.update(eog_idx)
+            except Exception:
+                pass
 
-    ica.exclude = sorted(exclude)
+    ica.exclude = sorted(chosen)
     cleaned = ica.apply(epochs.copy(), verbose="ERROR")
     return cleaned, ica, ica.exclude
 

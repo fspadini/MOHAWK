@@ -158,8 +158,12 @@ narrowband artefacts, or `cfg.artifact.hi_var_zthresh = 2.5` for noisy channels.
 | `ftcoherence.m` | `mohawk/connectivity.py` | dwPLI = `wpli2_debiased` |
 | `calcgraph.m` | `mohawk/metrics.py` `calc_graph_metrics` | per-band/threshold metrics |
 | BCT `threshold_proportional`, `clustering_coef_bu`, `charpath`, `distance_bin`, `efficiency_bin`, `betweenness_bin`, `degrees_und`, `community_louvain`, `participation_coef` | `mohawk/graph.py` | direct ports |
-| `plothead.m` / `plotgraph3d.m` / `plotarc3d.m` | `mohawk/plotting.py` `plot_head_network` | topographic network plot |
+| `plothead.m` / `plotgraph3d.m` / `plotarc3d.m` | `mohawk/plotting.py` `plot_mohawk_3d`, `plot_head_network` | 3D + flat topographic network plots |
 | `freqlist.mat` | `mohawk/config.py` `FREQ_BANDS` | delta/theta/alpha/beta/gamma |
+| `groupdata.m` (aggregation) | `mohawk/features.py` `SubjectFeatures` | per-subject feature files |
+| `plotauc.m` / `runauc.m` | `mohawk/stats.py` `screen_pair`, `absolute_auc`, `fdr_bh` | AUC / Mann-Whitney / BH-FDR screening |
+| (ordered-trend test) | `mohawk/stats.py` `jonckheere_terpstra` | monotonic trend across states |
+| `buildecc.m` / `testind.m` / `plotclass.m` | `mohawk/classification.py` `svm_cross_validation` | RBF-SVM 4-fold, Platt, Youden, χ² |
 
 Parameters (filter cut-offs, taper bandwidth, thresholds, band definitions,
 epoch length) are collected in `mohawk/config.py` and mirror the constants
@@ -207,11 +211,14 @@ with the frontal channel — versus zero components before tuning.
 uv run pytest
 ```
 
-33 tests cover the graph metrics (validated against analytically known graphs
+62 tests cover the graph metrics (validated against analytically known graphs
 — rings, complete graphs, stars, two-clique modularity), spectrum band-power
-normalisation and alpha-peak detection, dwPLI symmetry/range and
-phase-coupling recovery, the per-threshold graph metrics, IO/montage/filter
-behaviour, and the full pipeline end-to-end (in-memory and via a FIF file).
+and relative-power normalisation and alpha-peak detection, dwPLI symmetry/range
+and phase-coupling recovery, the per-threshold graph metrics, IO/montage/filter
+behaviour, the automatic and narrowband artefact rejection, faithful (manual)
+mode, YAML config loading, the group-level statistics (AUC/FDR/Jonckheere-
+Terpstra) and RBF-SVM classification, and the full pipeline end-to-end
+(in-memory and via a FIF file).
 
 ## Verified output
 
@@ -258,14 +265,89 @@ the strength/module arc colouring, and the raised-arc "mohawk" geometry.
 > committed to this repository (`data/`, `out_real/`, and `*.mff` are
 > git-ignored). Only synthetic example figures are included.
 
+## Faithful (manual) mode
+
+Automatic artefact rejection is a **practical substitute** for the paper's
+manual review of channels, epochs and ICA components — it is *not* what the
+original study did. For a faithful replication, turn automation off and supply
+your own reviewed decisions:
+
+```python
+from mohawk import run_pipeline
+from mohawk.artifacts import suggest_variance_outliers   # non-mutating review list
+
+result = run_pipeline(
+    "subject.mff", basename="subject", outdir="out",
+    auto_reject=False,                       # no automatic rejection
+    bad_channels=["E31", "E67"],             # your reviewed channels
+    bad_segments=[(12.0, 4.0)],              # (onset, duration) seconds to drop
+    ica_exclude=[0, 3],                      # your reviewed ICA components
+)
+```
+
+`suggest_variance_outliers(epochs)` returns a *suggested* bad-channel/epoch list
+without modifying anything, mirroring the paper's visual-confirmation workflow.
+On the CLI: `mohawk subject.mff --faithful --bad-channels E31,E67 --ica-exclude 0,3`.
+
+## Paper-exact configuration
+
+All parameters live in `mohawk/config.py` dataclasses and can also be loaded
+from YAML. The shipped `config/paper.yml` encodes the paper's choices (three
+bands, 33 densities from 0.9 to 0.1, Infomax ICA, relative power over 0.5-13 Hz):
+
+```python
+from mohawk import load_config, run_pipeline
+cfg = load_config("config/paper.yml")
+result = run_pipeline("subject.mff", basename="subject", outdir="out", config=cfg)
+```
+
+or `mohawk subject.mff --config config/paper.yml`. Two deliberate defaults
+differ from `paper.yml` because they follow the *released MOHAWK code* rather
+than the paper text: relative power is normalised over all five bands (not
+three), and densities start at 1.0 (not 0.9). Both are configurable.
+
+## Group-level analysis
+
+The paper's group ROC screening, ordered-trend test, and RBF-SVM classification
+are implemented and operate on per-subject feature files:
+
+```python
+from mohawk import run_pipeline, SubjectFeatures
+from mohawk.stats import screen_pair, jonckheere_terpstra
+from mohawk.classification import FeatureSpec, build_feature_matrix, svm_cross_validation
+
+# 1. per subject: run the pipeline and save features
+for path, name in recordings:
+    res = run_pipeline(path, basename=name, outdir="out", compute_graph=True)
+    SubjectFeatures.from_result(res).save(f"out/{name}_features.npz")
+
+# 2. group: screen every band/metric for a diagnostic contrast
+subjects = [SubjectFeatures.load(p) for p in feature_paths]
+ranking = screen_pair(subjects, crs_labels, "UWS", "MCS")   # AUC + Mann-Whitney + BH-FDR
+best = ranking[0]                                            # highest-AUC metric/band/density
+
+# 3. monotonic trend across the consciousness continuum
+obs, p = jonckheere_terpstra([values_uws, values_mcs_minus, values_mcs_plus])
+
+# 4. classify from the winning feature
+x = build_feature_matrix(subjects, [FeatureSpec(best.metric, best.band, best.density)])
+result = svm_cross_validation(x, crs_labels)
+print(result.accuracy, result.confusion, result.p_value)
+```
+
+`svm_cross_validation` reproduces the paper's stratified four-fold RBF-SVM with
+Platt probabilities and a Youden threshold. As the paper's own design selects
+hyperparameters on the same folds used to report accuracy, the estimate is not
+nested and can be optimistic — use nested CV for genuinely new claims.
+
 ## Scope
 
-This port covers the **single-subject** pipeline (`mohawk.m`), which is the
-complete analysis for one recording. The original repository also contains
-group-level and machine-learning classification scripts
-(`groupdata.m`, `buildecc.m`, `testind.m`, `plotclass.m`, `runjobs.m`, …) that
-operate on pre-built group datasets and classifier ensembles not shipped with
-the repository; those are out of scope here.
+The **single-subject** pipeline (`mohawk.m`) is fully covered, and the
+**group-level** ROC screening, trend test, and RBF-SVM classification from the
+paper are implemented (`mohawk/stats.py`, `mohawk/classification.py`). What is
+*not* included: the PET/clinical-label ingestion and the exact MATLAB ECOC
+multiclass loss (a one-vs-one SVC is used as the close analogue), since those
+depend on data and labels not shipped with the repository.
 
 ## License
 

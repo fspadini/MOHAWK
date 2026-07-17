@@ -73,18 +73,21 @@ def degrees_und(A: np.ndarray) -> np.ndarray:
 
 
 def clustering_coef_bu(A: np.ndarray) -> np.ndarray:
-    """Clustering coefficient, binary undirected (BCT ``clustering_coef_bu``)."""
+    """Clustering coefficient, binary undirected (BCT ``clustering_coef_bu``).
+
+    Vectorised: the number of closed triangles through each node is
+    ``diag(A @ A @ A)`` and the clustering coefficient is that count divided by
+    ``k*(k-1)`` (the number of possible connected neighbour pairs).
+    """
     G = (np.asarray(A) != 0).astype(float)
     np.fill_diagonal(G, 0.0)
-    n = G.shape[0]
-    C = np.zeros(n)
-    for u in range(n):
-        V = np.flatnonzero(G[u])
-        k = V.size
-        if k >= 2:
-            S = G[np.ix_(V, V)]
-            C[u] = S.sum() / (k * k - k)
-    return C
+    k = G.sum(axis=1)
+    triangles_twice = np.diagonal(G @ G @ G)
+    denom = k * (k - 1)
+    return np.divide(
+        triangles_twice, denom,
+        out=np.zeros_like(k, dtype=float), where=denom > 0,
+    )
 
 
 def distance_bin(A: np.ndarray) -> np.ndarray:

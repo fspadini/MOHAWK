@@ -121,3 +121,23 @@ def test_reject_and_interpolate_runs():
     ep = _epochs_with(16, seed=4)
     out = artifacts.reject_and_interpolate(ep, ArtifactConfig())
     assert len(out.ch_names) == len(ep.ch_names)  # bads interpolated, not dropped
+
+
+def test_suggest_variance_outliers_is_non_mutating():
+    ep = _epochs_with(16, seed=7)
+    n0 = len(ep.ch_names)
+    before = ep.get_data().copy()
+    bad_ch, bad_ep = artifacts.suggest_variance_outliers(ep, ArtifactConfig())
+    assert len(ep.ch_names) == n0                 # nothing dropped
+    assert np.array_equal(ep.get_data(), before)  # nothing changed
+    assert isinstance(bad_ch, list) and isinstance(bad_ep, list)
+
+
+def test_reject_manual_bads_applied_without_auto():
+    ep = _epochs_with(16, seed=8)
+    target = ep.ch_names[3]
+    out = artifacts.reject_and_interpolate(
+        ep, ArtifactConfig(), auto=False, manual_bads=[target]
+    )
+    # channel count preserved (interpolated), and auto detection did not run
+    assert len(out.ch_names) == len(ep.ch_names)

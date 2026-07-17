@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 import sys
 
-from .config import GraphConfig, MohawkConfig
+from .config import GraphConfig, MohawkConfig, load_config
 from .pipeline import run_pipeline, save_results
 
 
@@ -32,13 +32,27 @@ def main(argv=None) -> int:
                         help="Skip figure generation.")
     parser.add_argument("--heuristic", type=int, default=None,
                         help="Louvain repetitions for graph metrics (default 50).")
+    parser.add_argument("--config", default=None,
+                        help="YAML config file (e.g. config/paper.yml for paper-exact settings).")
+    parser.add_argument("--faithful", action="store_true",
+                        help="Faithful mode: no automatic artefact rejection; "
+                             "use the reviewed --bad-channels / --ica-exclude instead.")
+    parser.add_argument("--bad-channels", default=None,
+                        help="Comma-separated channels to interpolate (manual).")
+    parser.add_argument("--ica-exclude", default=None,
+                        help="Comma-separated ICA component indices to remove (manual).")
     parser.add_argument("--demo", action="store_true",
                         help="Run on built-in synthetic data instead of a file.")
     args = parser.parse_args(argv)
 
-    config = MohawkConfig()
+    config = load_config(args.config) if args.config else MohawkConfig()
     if args.heuristic is not None:
         config.graph = GraphConfig(heuristic=args.heuristic)
+
+    bad_channels = args.bad_channels.split(",") if args.bad_channels else ()
+    ica_exclude = (
+        [int(i) for i in args.ica_exclude.split(",")] if args.ica_exclude else None
+    )
 
     if args.demo:
         from .datasets import synthetic_raw
@@ -61,6 +75,9 @@ def main(argv=None) -> int:
         set_trials=None if args.trials == 0 else args.trials,
         compute_graph=not args.no_graph,
         make_figures=not args.no_figures,
+        auto_reject=not args.faithful,
+        bad_channels=bad_channels,
+        ica_exclude=ica_exclude,
     )
     path = save_results(result, args.outdir)
     print(f"MOHAWK: done. ICA excluded {len(result.ica_excluded)} components.")

@@ -20,7 +20,8 @@ from .config import FREQ_BANDS, SpectrumConfig
 class SpectrumResult:
     freqs: np.ndarray                 # (n_freqs,)
     spectra: np.ndarray               # (n_channels, n_freqs) mean power
-    band_power: np.ndarray            # (n_bands, n_channels) normalised
+    band_power: np.ndarray            # (n_bands, n_channels) peak-in-band, normalised
+    relative_power: np.ndarray        # (n_bands, n_channels) sum-in-band, percent
     ch_names: list
     bands: np.ndarray                 # (n_bands, 2)
 
@@ -45,13 +46,44 @@ def calc_spectrum(
     spectra = psds.mean(axis=0)  # average over epochs -> (n_ch, n_freqs)
 
     band_power = _peak_band_power(spectra, freqs, bands)
+    relative_power = relative_band_power(
+        spectra, freqs, bands, cfg.relative_power_nbands
+    )
     return SpectrumResult(
         freqs=freqs,
         spectra=spectra,
         band_power=band_power,
+        relative_power=relative_power,
         ch_names=list(epochs.ch_names),
         bands=bands,
     )
+
+
+def relative_band_power(
+    spectra: np.ndarray,
+    freqs: np.ndarray,
+    bands: np.ndarray,
+    nbands: int | None = None,
+) -> np.ndarray:
+    """Relative band power as a percentage of total power (paper definition).
+
+    Integrates (sums) power within each band and expresses it as a percentage
+    of the total over the first ``nbands`` bands.  With ``nbands=3`` this is the
+    paper's delta/theta/alpha relative power over 0.5-13 Hz; with ``nbands=None``
+    it normalises over all supplied bands (matching ``freqlist.mat``).
+    """
+    n_bands = bands.shape[0]
+    n_ch = spectra.shape[0]
+    band_sum = np.zeros((n_bands, n_ch))
+    for f in range(n_bands):
+        lo = min(bands[f]); hi = max(bands[f])
+        mask = (freqs >= lo) & (freqs <= hi if f == n_bands - 1 else freqs < hi)
+        if mask.any():
+            band_sum[f] = spectra[:, mask].sum(axis=1)
+    k = n_bands if nbands is None else min(nbands, n_bands)
+    total = band_sum[:k].sum(axis=0, keepdims=True)
+    total = np.maximum(total, np.finfo(float).eps)
+    return 100.0 * band_sum / total
 
 
 def _peak_band_power(

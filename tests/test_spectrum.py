@@ -6,6 +6,18 @@ from mohawk.config import FREQ_BANDS
 from mohawk.spectrum import _peak_band_power
 
 
+def test_relative_band_power_normalisation():
+    from mohawk.spectrum import relative_band_power
+    freqs = np.linspace(0.5, 45, 900)
+    spectra = np.ones((5, freqs.size))
+    # normalise over 3 bands -> each channel's delta+theta+alpha sums to 100
+    rel3 = relative_band_power(spectra, freqs, FREQ_BANDS, nbands=3)
+    assert np.allclose(rel3[:3].sum(axis=0), 100.0)
+    # over all 5 bands -> the full stack sums to 100
+    rel5 = relative_band_power(spectra, freqs, FREQ_BANDS, nbands=None)
+    assert np.allclose(rel5.sum(axis=0), 100.0)
+
+
 def test_band_power_normalised_per_channel():
     rng = np.random.default_rng(0)
     freqs = np.linspace(0.5, 45, 400)

@@ -8,7 +8,7 @@ port reproduces the same analysis.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 
 import numpy as np
 
@@ -44,6 +44,10 @@ class SpectrumConfig:
     fmin: float = 0.5                  # cfg.foilim(1)
     fmax: float = 45.0                 # cfg.foilim(2)
     bandwidth: float = 0.6             # 2 * cfg.tapsmofrq (0.3) -> full bandwidth
+    # Number of leading bands the sum-based relative power is normalised over.
+    # None -> all bands (matches freqlist.mat / calcftspec.m, 5 bands);
+    # 3 -> delta/theta/alpha over 0.5-13 Hz (matches the paper's text).
+    relative_power_nbands: int | None = None
 
 
 @dataclass
@@ -87,6 +91,8 @@ class ArtifactConfig:
     narrowband_zthresh: float = 4.0    # robust-z of that excess across channels
     n_ica_components: float = 0.99     # explained-variance for ICA (computeic)
     ica_random_state: int = 42
+    ica_method: str = "fastica"        # "fastica" | "infomax" | "picard"
+    ica_extended: bool = True          # extended Infomax (EEGLAB runica default)
     eog_threshold: float = 3.0         # z threshold for ICA EOG (blink) detection
 
 
@@ -112,3 +118,45 @@ class MohawkConfig:
     plot: PlotConfig = field(default_factory=PlotConfig)
     bands: np.ndarray = field(default_factory=lambda: FREQ_BANDS.copy())
     band_names: tuple = BAND_NAMES
+
+
+_SECTIONS = {
+    "preproc": PreprocConfig,
+    "spectrum": SpectrumConfig,
+    "connectivity": ConnectivityConfig,
+    "graph": GraphConfig,
+    "artifact": ArtifactConfig,
+    "plot": PlotConfig,
+}
+
+
+def config_from_dict(data: dict) -> MohawkConfig:
+    """Build a :class:`MohawkConfig` from a plain dict (e.g. parsed YAML).
+
+    Recognised top-level keys: ``preproc``, ``spectrum``, ``connectivity``,
+    ``graph``, ``artifact``, ``plot`` (each a mapping of field overrides), plus
+    ``bands`` (list of ``[low, high]``), ``band_names``, and ``densities``
+    (list of proportional thresholds -> ``graph.thresholds``).
+    """
+    cfg = MohawkConfig()
+    for name, klass in _SECTIONS.items():
+        if name in data and data[name]:
+            valid = {f.name for f in fields(klass)}
+            kwargs = {k: v for k, v in data[name].items() if k in valid}
+            setattr(cfg, name, klass(**kwargs))
+    if "densities" in data and data["densities"]:
+        cfg.graph.thresholds = np.asarray(data["densities"], dtype=float)
+    if "bands" in data and data["bands"]:
+        cfg.bands = np.asarray(data["bands"], dtype=float)
+    if "band_names" in data and data["band_names"]:
+        cfg.band_names = tuple(data["band_names"])
+    return cfg
+
+
+def load_config(path) -> MohawkConfig:
+    """Load a :class:`MohawkConfig` from a YAML file (requires PyYAML)."""
+    import yaml  # optional dependency, imported lazily
+
+    with open(path) as fh:
+        data = yaml.safe_load(fh) or {}
+    return config_from_dict(data)

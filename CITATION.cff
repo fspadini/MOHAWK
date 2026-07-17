@@ -1,0 +1,42 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite the underlying paper below."
+title: "MOHAWK (Python/MNE port)"
+abstract: >-
+  A Python/MNE reimplementation of the MOHAWK hdEEG brain-network pipeline,
+  including the single-subject spectral/connectivity/graph analysis, the 3D
+  connectivity topograph, and the group-level ROC screening and RBF-SVM
+  classification from Chennu et al. (2017).
+license: GPL-3.0-or-later
+references:
+  - type: article
+    authors:
+      - family-names: Chennu
+        given-names: Srivas
+      - family-names: Annen
+        given-names: Jitka
+      - family-names: Wannez
+        given-names: Sarah
+      - family-names: Thibaut
+        given-names: Aurore
+      - family-names: Chatelle
+        given-names: Camille
+      - family-names: Cassol
+        given-names: Helena
+      - family-names: Martens
+        given-names: Géraldine
+      - family-names: Schnakers
+        given-names: Caroline
+      - family-names: Gosseries
+        given-names: Olivia
+      - family-names: Menon
+        given-names: David
+      - family-names: Laureys
+        given-names: Steven
+    title: "Brain networks predict metabolism, diagnosis and prognosis at the bedside in disorders of consciousness"
+    journal: "Brain"
+    year: 2017
+    volume: 140
+    issue: 8
+    start: 2120
+    end: 2132
+    doi: 10.1093/brain/awx163

@@ -18,7 +18,8 @@ def make_epochs(
     """
     cfg = cfg or PreprocConfig()
     epochs = mne.make_fixed_length_epochs(
-        raw, duration=cfg.epoch_length, preload=True, verbose="ERROR"
+        raw, duration=cfg.epoch_length, preload=True,
+        reject_by_annotation=True, verbose="ERROR",
     )
     epochs.apply_baseline((None, None), verbose="ERROR")
     return epochs
